@@ -33,6 +33,9 @@ files = [file for file in files if ".json" not in file]  # remove json files fro
 
 
 def hash_table(table_html: str) -> str:
+    """
+    
+    """
     return hashlib.sha256(table_html.encode("utf-8")).hexdigest()
 
 
