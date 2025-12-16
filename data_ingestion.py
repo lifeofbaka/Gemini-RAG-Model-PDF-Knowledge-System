@@ -34,8 +34,6 @@ files = [file for file in files if ".json" not in file]  # remove json files fro
 
 def hash_table(table_html: str) -> str:
     """
-<<<<<<< HEAD
-=======
 
     This function creates a hash from the table html contents.
 
@@ -43,7 +41,6 @@ def hash_table(table_html: str) -> str:
     :type table_html: str
     :return: hash of the table html contents
     :rtype: str
->>>>>>> refs/remotes/master/master
     
     """
     return hashlib.sha256(table_html.encode("utf-8")).hexdigest()
