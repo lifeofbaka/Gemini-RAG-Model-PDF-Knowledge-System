@@ -11,6 +11,8 @@ import glob
 
 import json
 import hashlib
+import re
+
 
 # === get all text files 
 
@@ -48,18 +50,12 @@ def hash_table(table_html: str) -> str:
     return hashlib.sha256(table_html.encode("utf-8")).hexdigest()
 
 
-def cache_text_and_table_artifacts_from_markdown(file: str) -> None: 
-    """
-    This function parses text and table data from markdown file and creats usable 
-    json artifacts.
+def cache_text_and_table_artifacts_from_markdown(file: str) -> None:
 
-    :param file: file path 
-    :type file: str
-    
-    """
+    # file directory
     cur_dir = pathlib.Path(file).parent
 
-    # === Load markdown file ===
+    # Load md file 
     loader = UnstructuredMarkdownLoader(
         file,
         mode="elements",
@@ -68,125 +64,116 @@ def cache_text_and_table_artifacts_from_markdown(file: str) -> None:
 
     doc = loader.load()
 
-    # === locate and store document points by category === 
-    raw_tables = {} 
-    raw_text = {}
-    for item in range(len(doc)): 
-        category = doc[item].metadata.get("category") 
 
-        # Seperate Tables from other text categories, titles, and lists 
-        if 'Table' in category:
-            raw_tables[item] = doc[item]
-        else:
-            raw_text[item] = doc[item]
+    #  === File output paths === 
+    text_out_path = os.path.join(
+        cur_dir, pathlib.Path(file).stem + "_text_chunks.json"
+    )
+    table_out_path = os.path.join(
+        cur_dir, pathlib.Path(file).stem + "_table_summaries.json"
+    )
 
-    text_out = file.split('/')[-1].split('.')[0] + "_text_chunks.json" # text file name
-    text_out_path = os.path.join(cur_dir, text_out)
-
-
-    # =========================
-    # TEXT EXTRACTION (NO LLM)
-    # =========================
+    # === Load caches ===
     text_summaries = {}
     if os.path.exists(text_out_path):
-        with open(text_out_path, "r") as f:
+        with open(text_out_path) as f:
             text_summaries = json.load(f)
-    else:
-        text_summaries = {}
 
-    for key, text_doc in raw_text.items():
+    table_summaries = {}
+    if os.path.exists(table_out_path):
+        with open(table_out_path) as f:
+            table_summaries = json.load(f)
 
-        text_content = text_doc.page_content.strip()
-        if not text_content:
+    # =========================
+    # PAGE TRACKING STATE
+    # =========================
+    current_page = None
+    page_pattern = re.compile(r"^page:\s*(\d+)", re.IGNORECASE)
+
+    # =========================
+    # PROCESS ELEMENTS IN ORDER
+    # =========================
+    for element in doc:
+        text = element.page_content.strip()
+        if not text:
             continue
 
-        text_hash = hash_text(text_content)
+        # Detect page marker
+        page_match = page_pattern.search(text)
+        if page_match:
+            current_page = int(page_match.group(1))
+            continue  # Do NOT store page markers as content
 
-        if text_hash in text_summaries:
-                print("Text was already extracted...")
+        category = element.metadata.get("category", "UncategorizedText")
+
+        # =========================
+        # TABLE HANDLING
+        # =========================
+        if "Table" in category:
+            table_html = element.metadata.get("text_as_html")
+            table_hash = hash_table(table_html)
+
+            if table_hash in table_summaries:
                 continue
-        
-        # text data
-        parent_id = text_doc.metadata.get("parent_id") 
-        document_id = text_doc.metadata.get("filename")
+            
+            # === create summary of markdown table ===
+            response = client.models.generate_content(
+                model="gemini-2.0-flash-001",
+                contents={"text": table_html},
+                config={
+                    "max_output_tokens": 1000,
+                    "temperature": 0,
+                    "system_instruction": (
+                        "You are an expert assistant that summarizes tables accurately, "
+                        "preserving all key information."
+                    ),
+                },
+            )
 
-        text_summaries[text_hash] = {"text": text_content,
-                                    "source": text_doc.metadata.get("source"),
-                                    "element_id": text_doc.metadata.get("element_id"),
-                                    "category": text_doc.metadata.get("category"),
-                                    "document_id": document_id,
-                                    "page": text_doc.metadata.get("page"),
-                                    "language": text_doc.metadata.get("languages"),
-                                        }
-        
-        if parent_id:
-            text_summaries["parent_id"] = parent_id
-        
 
+            table_summaries[table_hash] = {
+                "summary": response.text,
+                "table_html": table_html,
+                "source": element.metadata.get("source"),
+                "element_id": element.metadata.get("element_id"),
+                "category": category,
+                "document_id": element.metadata.get("filename"),
+                "page": current_page,
+                "language": element.metadata.get("languages"),
+                "model": "gemini-2.0-flash-001",
+            }
+            # print(table_summaries)
+
+        # =========================
+        # TEXT HANDLING
+        # =========================
+        else:
+            text_hash = hash_text(text)
+            if text_hash in text_summaries:
+                continue
+
+            text_summaries[text_hash] = {
+                "text": text,
+                "source": element.metadata.get("source"),
+                "element_id": element.metadata.get("element_id"),
+                "category": category,
+                "document_id": element.metadata.get("filename"),
+                "page": current_page,
+                "language": element.metadata.get("languages"),
+                "parent_id": element.metadata.get("parent_id"),
+            }
+
+            # print(text_summaries)
+
+    # =========================
+    # WRITE OUTPUTS
+    # =========================
     with open(text_out_path, "w") as f:
         json.dump(text_summaries, f, indent=2)
 
-
-
-    # =========================
-    # TABLE SUMMARIZATION (LLM)
-    # =========================
-    if not raw_tables:
-        return    
-
-    # === check if there is document table summary data is already stored === 
-
-    table_out = file.split('/')[-1].split('.')[0] + "_table_summaries.json" # table file name
-    
-    table_out_path = os.path.join(cur_dir, table_out)
-
-        # Load Tables or Create new tables 
-    if os.path.exists(table_out_path):
-        with open(table_out_path, "r") as f:
-            table_summaries = json.load(f)
-    else:
-        table_summaries = {}
-
-    for key, table_doc in raw_tables.items():
-
-        table_html = table_doc.metadata.get("text_as_html")
-        table_hash = hash_table(table_html)
-
-        # Skip if already summarized
-        if table_hash in table_summaries:
-            print("Table was already summarized, skipping...")
-            continue
-        
-        # Create table summary
-        response = client.models.generate_content(
-                    model="gemini-2.0-flash-001",
-                    contents={"text": table_html},
-                    config={
-                        "max_output_tokens": 1000,
-                        "temperature": 0,
-                        "top_p": 0.95,
-                        "top_k": 20, 
-                        "system_instruction": (
-                            "You are an expert assistant that summarizes tables accurately, "
-                            "preserving all key information."),
-                        },
-                    )
-        # store table summary 
-        table_summaries[table_hash] = { "summary": response.text,
-                                        "source": table_doc.metadata.get("source"),
-                                        "element_id": table_doc.metadata.get("element_id"),
-                                        "parent_id": table_doc.metadata.get("parent_id"), 
-                                        "category": table_doc.metadata.get("category"),
-                                        "document_id": table_doc.metadata.get("filename"),
-                                        "page": table_doc.metadata.get("page"),
-                                        "language": table_doc.metadata.get("languages"),
-                                        "model": "gemini-2.0-flash-001",
-                                        }
-        
-
     with open(table_out_path, "w") as f:
         json.dump(table_summaries, f, indent=2)
-    
+
 # === Usage ===
 for file in files: 
     cache_text_and_table_artifacts_from_markdown(file)
