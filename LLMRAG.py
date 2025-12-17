@@ -38,3 +38,4 @@ client = genai.Client(api_key=api_key)
 
 print(response.text) """
 
+    

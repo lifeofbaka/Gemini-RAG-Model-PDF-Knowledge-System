@@ -34,7 +34,7 @@ def pdf_extract(file_paths: list, text_extraction=True, image_extraction=True) -
         raise Exception("File paths must be a list.")
     
     # === Loop through files === 
-    for file in tqdm(file_paths, desc="Processing Files"):
+    for file in file_paths:
 
         file_name = pathlib.Path(file).name.split(".")[0] # get file name without extension"
 
@@ -59,9 +59,15 @@ def pdf_extract(file_paths: list, text_extraction=True, image_extraction=True) -
                 # === Text and Table Extraction ===
                 print (f"Extracting text and table data from {file_name}...")
 
-                md = pymupdf4llm.to_markdown(doc)
+                # md = pymupdf4llm.to_markdown(doc) # this does not generate page information 
 
-                text_out.write_bytes(md.encode()) # write markdown file to data directory
+                md_pages = []
+                
+                for i in tqdm(range(len(doc)), f"processing... {doc.name}"):
+                    page_md = pymupdf4llm.to_markdown(doc, pages=[i])
+                    md_pages.append(f"\n---\npage: {i+1}\n---\n\n{page_md}")
+
+                text_out.write_bytes("\n".join(md_pages).encode()) # write markdown file to data directory
                 print(f"Text and Tables extracted from {file_name} and saved to {text_out.with_suffix(suffix)}")
         else: 
             doc = None
