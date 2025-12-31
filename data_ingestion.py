@@ -13,6 +13,7 @@ import json
 import hashlib
 import re
 
+from tqdm import tqdm
 
 # === get all text files 
 
@@ -93,7 +94,7 @@ def cache_text_and_table_artifacts_from_markdown(file: str) -> None:
     # =========================
     # PROCESS ELEMENTS IN ORDER
     # =========================
-    for element in doc:
+    for element in tqdm(doc, desc="Processing elements"):
         text = element.page_content.strip()
         if not text:
             continue
@@ -132,15 +133,17 @@ def cache_text_and_table_artifacts_from_markdown(file: str) -> None:
 
 
             table_summaries[table_hash] = {
-                "summary": response.text,
-                "table_html": table_html,
-                "source": element.metadata.get("source"),
-                "element_id": element.metadata.get("element_id"),
-                "category": category,
-                "document_id": element.metadata.get("filename"),
-                "page": current_page,
-                "language": element.metadata.get("languages"),
-                "model": "gemini-2.0-flash-001",
+                "page_content": response.text, 
+                
+                "metadata": {"table_html": table_html,
+                             "source": element.metadata.get("source"),
+                             "element_id": element.metadata.get("element_id"),
+                             "category": category,
+                             "document_id": element.metadata.get("filename"),
+                             "parent_id": element.metadata.get("parent_id"),
+                             "page": current_page,
+                             "language": element.metadata.get("languages"),
+                             "model": "gemini-2.0-flash-001",}
             }
             # print(table_summaries)
 
@@ -153,14 +156,16 @@ def cache_text_and_table_artifacts_from_markdown(file: str) -> None:
                 continue
 
             text_summaries[text_hash] = {
-                "text": text,
-                "source": element.metadata.get("source"),
-                "element_id": element.metadata.get("element_id"),
-                "category": category,
-                "document_id": element.metadata.get("filename"),
-                "page": current_page,
-                "language": element.metadata.get("languages"),
-                "parent_id": element.metadata.get("parent_id"),
+                "page_content": text,
+                  "metadata" : {  "source": element.metadata.get("source"),
+                                "element_id": element.metadata.get("element_id"),
+                                "category": category,
+                                "document_id": element.metadata.get("filename"),
+                                "page": current_page,
+                                "language": element.metadata.get("languages"),
+                                "parent_id": element.metadata.get("parent_id"),
+                }
+                
             }
 
             # print(text_summaries)
