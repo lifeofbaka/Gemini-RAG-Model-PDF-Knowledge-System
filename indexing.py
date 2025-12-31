@@ -1,7 +1,7 @@
 import json 
 import glob 
 
-
+from LLMRAG import chroma_client
 from uuid import uuid4
 
 from langchain_core.documents import Document
